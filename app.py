@@ -7,7 +7,7 @@ import pandas as pd
 import logging
 from flask_cors import CORS
 from datetime import datetime
-import os 
+import os
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -30,7 +30,7 @@ def get_stock_data(symbol, start='2010-01-01', end=enddt):
     logging.info(f"Stock data fetched successfully. Data size: {len(stock_data)} rows")
     return stock_data
 
-# Function to train the model and predict the stock price
+# Function to train the model and predict Buy/Sell/Hold
 def train_model(stock_data, prediction_days=15):
     logging.info(f"Training model with prediction days: {prediction_days}")
     
@@ -54,17 +54,29 @@ def train_model(stock_data, prediction_days=15):
 
     # Now we predict the next day's stock price using the last available close price (1 feature)
     last_close_price = stock_data['Close'].values[-1].reshape(-1, 1)  # Reshape for single feature
-    future_price = model.predict(last_close_price)
+    future_price = model.predict(last_close_price)[0]  # Get future price as a single value
+    current_price = last_close_price[0][0]  # Current closing price
 
-    logging.info(f"Prediction completed. Future price: {future_price[0]}")
-    
-    return future_price[0]
+    logging.info(f"Prediction completed. Future price: {future_price}")
+
+    # Determine recommendation based on price change
+    price_diff = future_price - current_price
+    threshold = 0.01 * current_price  # 1% threshold to avoid small fluctuations
+    if price_diff > threshold:
+        recommendation = "Buy"
+    elif price_diff < -threshold:
+        recommendation = "Sell"
+    else:
+        recommendation = "Hold"
+
+    return recommendation, future_price, current_price
 
 # Route for the homepage
 @app.route('/')
 def home():
     return send_from_directory(os.getcwd(), 'home.html') # type: ignore
 
+# Dictionary mapping for Indian stock codes
 INDIAN_STOCKS = {
     "HINDALCO": "HINDALCO.NS",
     "TATAMOTORS": "TATAMOTORS.NS",
@@ -76,7 +88,7 @@ INDIAN_STOCKS = {
     "SBIN": "SBIN.NS",
     "BAJFINANCE": "BAJFINANCE.NS",
     "LT": "LT.NS",
-    # Add more stocks as needed
+    # Add more Indian stock symbols as needed
 }
 
 @app.route('/predict', methods=['POST'])
@@ -100,8 +112,8 @@ def predict():
         stock_data = get_stock_data(symbol)
         logging.info(f"Stock data fetched for {symbol}")
         
-        future_price = train_model(stock_data)
-        logging.info(f"Prediction made for {symbol}: {future_price:.2f}")
+        recommendation, future_price, current_price = train_model(stock_data)
+        logging.info(f"Recommendation for {symbol}: {recommendation}")
 
         # Determine currency based on symbol
         if symbol.endswith('.NS'):
@@ -109,7 +121,10 @@ def predict():
         else:
             currency = '$'  # US Dollar for other stocks
 
-        return jsonify({'prediction': f"The predicted price for {symbol} is {currency}{future_price:.2f}"})
+        return jsonify({
+            'prediction': f"The recommendation for {symbol} is to '{recommendation}'.",
+            'details': f"Predicted future price: {currency}{future_price:.2f}, Current price: {currency}{current_price:.2f}"
+        })
     except Exception as e:
         logging.error(f"Error during prediction: {e}")
         return jsonify({'error': str(e)}), 500
