@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory
 import yfinance as yf
-from sklearn.linear_model import LinearRegression, RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
