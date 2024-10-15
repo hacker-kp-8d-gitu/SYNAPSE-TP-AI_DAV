@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify, send_from_directory
 import yfinance as yf
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, RandomForestRegressor
 from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
 import logging
 from flask_cors import CORS
 from datetime import datetime
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import os
 
 # Initialize the Flask app
@@ -15,6 +16,21 @@ CORS(app)
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO)
+
+# Indian stock symbol mapping
+INDIAN_STOCKS = {
+    "HINDALCO": "HINDALCO.NS",
+    "TATAMOTORS": "TATAMOTORS.NS",
+    "RELIANCE": "RELIANCE.NS",
+    "INFY": "INFY.NS",
+    "TCS": "TCS.NS",
+    "HDFC": "HDFC.NS",
+    "ICICIBANK": "ICICIBANK.NS",
+    "SBIN": "SBIN.NS",
+    "BAJFINANCE": "BAJFINANCE.NS",
+    "LT": "LT.NS",
+    # Add more Indian stock symbols as needed
+}
 
 # Function to fetch stock data
 enddt = datetime.now().strftime('%Y-%m-%d')
@@ -31,8 +47,8 @@ def get_stock_data(symbol, start='2010-01-01', end=enddt):
     return stock_data
 
 # Function to train the model and predict Buy/Sell/Hold
-def train_model(stock_data, prediction_days=15):
-    logging.info(f"Training model with prediction days: {prediction_days}")
+def train_model(stock_data, prediction_days=15, model_type='linear'):
+    logging.info(f"Training model with prediction days: {prediction_days} using {model_type} model")
     
     # Create the 'Prediction' column (next day's close price)
     stock_data['Prediction'] = stock_data[['Close']].shift(-prediction_days)
@@ -47,9 +63,14 @@ def train_model(stock_data, prediction_days=15):
     
     # Split the data into training and test sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+    # Select the model type (Linear Regression or Random Forest)
+    if model_type == 'linear':
+        model = LinearRegression()
+    else:
+        model = RandomForestRegressor(n_estimators=100)
     
-    # Train the Linear Regression model
-    model = LinearRegression()
+    # Train the model
     model.fit(X_train, y_train)
 
     # Now we predict the next day's stock price using the last available close price (1 feature)
@@ -71,33 +92,27 @@ def train_model(stock_data, prediction_days=15):
 
     return recommendation, future_price, current_price
 
+# Function to perform sentiment analysis on stock-related news
+def sentiment_analysis(news_data):
+    analyzer = SentimentIntensityAnalyzer()
+    sentiments = [analyzer.polarity_scores(article) for article in news_data]
+    average_sentiment = np.mean([sentiment['compound'] for sentiment in sentiments])
+    return average_sentiment
+
 # Route for the homepage
 @app.route('/')
 def home():
-    return send_from_directory(os.getcwd(), 'home.html') # type: ignore
+    return send_from_directory(os.getcwd(), 'home.html')
 
-# Dictionary mapping for Indian stock codes
-INDIAN_STOCKS = {
-    "HINDALCO": "HINDALCO.NS",
-    "TATAMOTORS": "TATAMOTORS.NS",
-    "RELIANCE": "RELIANCE.NS",
-    "INFY": "INFY.NS",
-    "TCS": "TCS.NS",
-    "HDFC": "HDFC.NS",
-    "ICICIBANK": "ICICIBANK.NS",
-    "SBIN": "SBIN.NS",
-    "BAJFINANCE": "BAJFINANCE.NS",
-    "LT": "LT.NS",
-    # Add more Indian stock symbols as needed
-}
-
+# API route to predict stock prices with Buy/Sell/Hold recommendation
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
         logging.info("Received a request for prediction")
         data = request.get_json()
         symbol = data.get('symbol', '').strip().upper()
-        
+        model_type = data.get('model_type', 'linear').lower()
+
         if not symbol:
             logging.warning("No stock symbol provided")
             return jsonify({'error': 'Please provide a valid stock symbol.'}), 400
@@ -110,9 +125,7 @@ def predict():
         
         # Fetch stock data and make the prediction
         stock_data = get_stock_data(symbol)
-        logging.info(f"Stock data fetched for {symbol}")
-        
-        recommendation, future_price, current_price = train_model(stock_data)
+        recommendation, future_price, current_price = train_model(stock_data, model_type=model_type)
         logging.info(f"Recommendation for {symbol}: {recommendation}")
 
         # Determine currency based on symbol
@@ -130,4 +143,5 @@ def predict():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5500)
+    port = int(os.environ.get('PORT', 5500))
+    app.run(host='0.0.0.0', port=port, debug=True)
